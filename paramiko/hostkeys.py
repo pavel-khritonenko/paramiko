@@ -22,6 +22,7 @@ import os
 import re
 from base64 import decodebytes, encodebytes
 from collections.abc import MutableMapping
+from enum import Enum
 from hashlib import sha1
 from hmac import HMAC
 
@@ -91,9 +92,11 @@ class HostKeys(MutableMapping):
                     continue
                 try:
                     entry = HostKeyEntry.from_line(line, lineno)
-                except SSHException:
+                except (SSHException, InvalidHostKey):
                     continue
                 if entry is not None:
+                    if entry.marker is not None:
+                        continue
                     _hostnames = entry.hostnames
                     for h in _hostnames:
                         if self.check(h, entry.key):
@@ -309,15 +312,22 @@ class InvalidHostKey(Exception):
         self.args = (line, exc)
 
 
+class HostKeyMarkers(str, Enum):
+    CERT_AUTHORITY = "@cert-authority"
+    REVOKED = "@revoked"
+
+
 class HostKeyEntry:
     """
     Representation of a line in an OpenSSH-style "known hosts" file.
     """
 
-    def __init__(self, hostnames=None, key=None):
+    def __init__(self, hostnames=None, key=None, marker=None, comment=None):
         self.valid = (hostnames is not None) and (key is not None)
         self.hostnames = hostnames
         self.key = key
+        self.marker = marker
+        self.comment = comment
 
     @classmethod
     def from_line(cls, line, lineno=None):
@@ -340,9 +350,23 @@ class HostKeyEntry:
             msg = "Not enough fields found in known_hosts in line {} ({!r})"
             log.info(msg.format(lineno, line))
             return None
-        fields = fields[:3]
 
-        names, key_type, key = fields
+        marker = None
+        try:
+            marker = HostKeyMarkers(fields[0])
+            fields = fields[1:]
+        except ValueError:
+            marker = None
+
+        if len(fields) < 3:
+            msg = "Not enough fields found in known_hosts in line {} ({!r})"
+            log.info(msg.format(lineno, line))
+            return None
+
+        names, key_type, key = fields[0], fields[1], fields[2]
+        comment = None
+        if len(fields) > 3:
+            comment = " ".join(fields[3:])
         names = names.split(",")
 
         # Decide what kind of key we're looking at and create an object
@@ -357,7 +381,12 @@ class HostKeyEntry:
             raise InvalidHostKey(line, e)
 
         try:
-            return cls(names, PKey.from_type_string(key_type, key_bytes))
+            return cls(
+                names,
+                PKey.from_type_string(key_type, key_bytes),
+                marker=marker,
+                comment=comment,
+            )
         except UnknownKeyType:
             # TODO (backwards incompat): consider changing HostKeys API so this
             # just raises naturally and the exception is muted higher up in the
@@ -372,11 +401,19 @@ class HostKeyEntry:
         included.
         """
         if self.valid:
-            return "{} {} {}\n".format(
-                ",".join(self.hostnames),
-                self.key.get_name(),
-                self.key.get_base64(),
+            parts = []
+            if self.marker is not None:
+                parts.append(self.marker.value)
+            parts.extend(
+                [
+                    ",".join(self.hostnames),
+                    self.key.get_name(),
+                    self.key.get_base64(),
+                ]
             )
+            if self.comment:
+                parts.append(self.comment)
+            return " ".join(parts) + "\n"
         return None
 
     def __repr__(self):
