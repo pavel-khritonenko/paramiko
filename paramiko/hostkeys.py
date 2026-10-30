@@ -52,6 +52,8 @@ class HostKeys(MutableMapping):
         """
         # emulate a dict of { hostname: { keytype: PKey } }
         self._entries = []
+        self._cert_authorities = []
+        self._revoked = []
         if filename is not None:
             self.load(filename)
 
@@ -94,15 +96,20 @@ class HostKeys(MutableMapping):
                     entry = HostKeyEntry.from_line(line, lineno)
                 except (SSHException, InvalidHostKey):
                     continue
-                if entry is not None:
-                    if entry.marker is not None:
-                        continue
-                    _hostnames = entry.hostnames
-                    for h in _hostnames:
-                        if self.check(h, entry.key):
-                            entry.hostnames.remove(h)
-                    if len(entry.hostnames):
-                        self._entries.append(entry)
+                if entry is None:
+                    continue
+                if entry.marker is HostKeyMarkers.CERT_AUTHORITY:
+                    self._cert_authorities.append(entry)
+                    continue
+                if entry.marker is HostKeyMarkers.REVOKED:
+                    self._revoked.append(entry)
+                    continue
+                _hostnames = entry.hostnames
+                for h in _hostnames:
+                    if self.check(h, entry.key):
+                        entry.hostnames.remove(h)
+                if len(entry.hostnames):
+                    self._entries.append(entry)
 
     def save(self, filename):
         """
@@ -118,10 +125,15 @@ class HostKeys(MutableMapping):
         .. versionadded:: 1.6.1
         """
         with open(filename, "w") as f:
-            for e in self._entries:
-                line = e.to_line()
-                if line:
-                    f.write(line)
+            for bucket in (
+                self._entries,
+                self._cert_authorities,
+                self._revoked,
+            ):
+                for e in bucket:
+                    line = e.to_line()
+                    if line:
+                        f.write(line)
 
     def lookup(self, hostname):
         """
@@ -206,6 +218,9 @@ class HostKeys(MutableMapping):
                 return True
         return False
 
+
+
+
     def check(self, hostname, key):
         """
         Return True if the given key is associated with the given hostname
@@ -224,11 +239,27 @@ class HostKeys(MutableMapping):
             return False
         return host_key.asbytes() == key.asbytes()
 
+        k = self.lookup(hostname)
+        if k is not None:
+            host_key = k.get(key.get_name(), None)
+            if host_key is not None:
+                if host_key.asbytes() == key.asbytes():
+                    return True
+        if getattr(key, "public_blob", None) is not None:
+            for entry in self._cert_authorities:
+                if not self._ca_pattern_matches(entry, hostname):
+                    continue
+                if verify_host_certificate(entry.key, key, hostname):
+                    return True
+        return False
+
     def clear(self):
         """
         Remove all host keys from the dictionary.
         """
         self._entries = []
+        self._cert_authorities = []
+        self._revoked = []
 
     def __iter__(self):
         for k in self.keys():

@@ -47,6 +47,9 @@ T9iRZjQzvJd5s+kBAZtpk=
 B9J0s50l31MBGQ3GQ/Fc7SX6gkpXkwcZryoi4kNFhHu5LvHcZPdxXV1D+uTMfGS1eyd2Yz/DoNWXNA\
 l8TI0cAsW5ymME3bQ4J/k1IKxCtz/bAlAqFgKoc+EolMziDYqWIATtW0rYTJvzGAzTmMj80/QpsFH+\
 Pc2M= host-ca
+@revoked revoked.example.com ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAIEA1\
+PD6U2/TVxET6lkpKhOk5r9q/kAYG6sP9f5zuUYP8i7FOFp/6ncCEbbtg/lB+A3iidyxoSWl+9jtoyyDOOVX4UIDV9G11Ml8om3\
+D+jrpI9cycZHqilK0HmxDeCuxbwyMuaCygU9gS2qoRvNLWZk70OpIKSSpBo0Wl3/XUmz9uhc=
 """
 
 test_hosts_file_tabs = """\
@@ -61,6 +64,10 @@ modern.example.com\tssh-ed25519\tAAAAC3NzaC1lZDI1NTE5AAAAIKHEChAIxsh2hr8Q\
 curvy.example.com\tecdsa-sha2-nistp256\tAAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbml\
 zdHAyNTYAAABBBAa+pY7djSpbg5viAcZhPt56AO3U3Sd7h7dnlUp0EjfDgyYHYQxl2QZ4JGgfwR5iv\
 9T9iRZjQzvJd5s+kBAZtpk=
+@cert-authority\tca.example.com\tssh-rsa\tAAAAB3NzaC1yc2EAAAABIwAAAIEA8bP1ZA7DCZD\
+B9J0s50l31MBGQ3GQ/Fc7SX6gkpXkwcZryoi4kNFhHu5LvHcZPdxXV1D+uTMfGS1eyd2Yz/DoNWXNA\
+l8TI0cAsW5ymME3bQ4J/k1IKxCtz/bAlAqFgKoc+EolMziDYqWIATtW0rYTJvzGAzTmMj80/QpsFH+\
+Pc2M=\thost-ca
 """
 
 keyblob = b"""\
@@ -166,6 +173,23 @@ class HostKeysTest(unittest.TestCase):
             else:
                 assert False, "Key was not deleted from Entry on delitem!"
 
+    def test_cert_authority_not_in_host_dict(self):
+        hostdict = paramiko.HostKeys("hostfile.temp")
+        assert "ca.example.com" not in hostdict
+        assert len(hostdict) == 4
+
+    def test_save_roundtrip_preserves_cert_authority(self):
+        hostdict = paramiko.HostKeys("hostfile.temp")
+        hostdict.save("hostfile.out.temp")
+        try:
+            with open("hostfile.out.temp") as f:
+                text = f.read()
+            assert "@cert-authority" in text
+            assert "host-ca" in text
+            reloaded = paramiko.HostKeys("hostfile.out.temp")
+            assert "ca.example.com" not in reloaded
+        finally:
+            os.unlink("hostfile.out.temp")
 
 class HostKeysTabsTest(HostKeysTest):
     def setUp(self):
