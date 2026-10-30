@@ -405,6 +405,38 @@ class SSHClientTest(ClientTest):
 
         os.unlink(localname)
 
+    def test_save_host_keys_preserves_cert_authority(self):
+        ca_parts = (
+            open(_support("host_ca_trust/host_ca.pub")).read().strip().split()
+        )
+        fd, localname = mkstemp()
+        host_id = f"[{self.addr}]:{self.port}"
+        with os.fdopen(fd, "w") as f:
+            f.write(
+                "@cert-authority {} {} {} ca-comment\n".format(
+                    self.addr, ca_parts[0], ca_parts[1]
+                )
+            )
+            f.write(
+                "{} {} {}\n".format(
+                    host_id,
+                    "ssh-rsa",
+                    paramiko.RSAKey(
+                        data=paramiko.RSAKey.from_private_key_file(
+                            _support("rsa.key")
+                        ).asbytes()
+                    ).get_base64(),
+                )
+            )
+        client = SSHClient()
+        client.load_host_keys(localname)
+        client.save_host_keys(localname)
+        with open(localname) as f:
+            body = f.read()
+        self.assertIn("@cert-authority", body)
+        self.assertIn("ca-comment", body)
+        os.unlink(localname)
+
     def test_cleanup(self):
         """
         verify that when an SSHClient is collected, its transport (and the
