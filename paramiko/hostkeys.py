@@ -18,6 +18,7 @@
 
 
 import binascii
+import fnmatch
 import os
 import re
 from base64 import decodebytes, encodebytes
@@ -27,6 +28,7 @@ from hashlib import sha1
 from hmac import HMAC
 
 from paramiko.pkey import PKey, UnknownKeyType
+from paramiko.ssh_cert import verify_host_certificate
 from paramiko.ssh_exception import SSHException
 from paramiko.util import b, constant_time_bytes_eq, get_logger, u
 
@@ -218,8 +220,37 @@ class HostKeys(MutableMapping):
                 return True
         return False
 
+    @staticmethod
+    def _pattern_matches(patterns, target):
+        if hasattr(patterns, "split"):
+            patterns = patterns.split(",")
+        match = False
+        for pattern in patterns:
+            if pattern.startswith("!") and fnmatch.fnmatch(
+                target, pattern[1:]
+            ):
+                return False
+            if fnmatch.fnmatch(target, pattern):
+                match = True
+        return match
 
+    def _ca_pattern_matches(self, entry, trust_name):
+        for pattern_host in entry.hostnames:
+            if self._pattern_matches([pattern_host], trust_name):
+                return True
+            if trust_name.startswith("[") and "]:" in trust_name:
+                bare = trust_name[1 : trust_name.index("]")]
+                if self._pattern_matches([pattern_host], bare):
+                    return True
+        return False
 
+    def _is_revoked(self, key):
+        for entry in self._revoked:
+            if entry.key.get_name() != key.get_name():
+                continue
+            if entry.key.asbytes() == key.asbytes():
+                return True
+        return False
 
     def check(self, hostname, key):
         """
@@ -231,14 +262,8 @@ class HostKeys(MutableMapping):
         :return:
             ``True`` if the key is associated with the hostname; else ``False``
         """
-        k = self.lookup(hostname)
-        if k is None:
+        if self._is_revoked(key):
             return False
-        host_key = k.get(key.get_name(), None)
-        if host_key is None:
-            return False
-        return host_key.asbytes() == key.asbytes()
-
         k = self.lookup(hostname)
         if k is not None:
             host_key = k.get(key.get_name(), None)

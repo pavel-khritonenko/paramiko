@@ -191,6 +191,31 @@ class HostKeysTest(unittest.TestCase):
         finally:
             os.unlink("hostfile.out.temp")
 
+    def test_check_host_certificate_via_ca(self):
+        from base64 import decodebytes as b64decode
+
+        ca_parts = (
+            open(_support("host_ca_trust/host_ca.pub")).read().strip().split()
+        )
+        ca_key = paramiko.PKey.from_type_string(
+            ca_parts[0], b64decode(ca_parts[1].encode())
+        )
+        leaf = paramiko.RSAKey.from_private_key_file(
+            _support("host_ca_trust/host_leaf.key")
+        )
+        leaf.load_certificate(_support("host_ca_trust/host_leaf-cert.pub"))
+        hostdict = paramiko.HostKeys()
+        hostdict._cert_authorities.append(
+            paramiko.hostkeys.HostKeyEntry(
+                ["127.0.0.1"],
+                ca_key,
+                marker=paramiko.hostkeys.HostKeyMarkers.CERT_AUTHORITY,
+            )
+        )
+        self.assertTrue(hostdict.check("127.0.0.1", leaf))
+        self.assertTrue(hostdict.check("[127.0.0.1]:22", leaf))
+
+
 class HostKeysTabsTest(HostKeysTest):
     def setUp(self):
         with open("hostfile.temp", "w") as f:
